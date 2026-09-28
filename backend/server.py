@@ -53,14 +53,6 @@ from support_resistance import (
     evaluate_support_resistance_position,
     support_resistance_directive_state,
 )
-from simulation_lab import (
-    SimulationLabDisabledError,
-    require_simulation_lab_enabled,
-    run_buying_power_allocation_experiment,
-    run_orb_backtest_replay,
-    run_stop_trailing_dca_comparison,
-    simulation_lab_status,
-)
 from metrics import (
     edge_frontend_long_task_duration_ms,
     edge_frontend_rum_active_routes,
@@ -570,7 +562,7 @@ class NotificationConfirmationPreviewBody(BaseModel):
     """Request body for POST /api/notifications/confirmation/preview."""
     action_type: str = Field(..., min_length=1, max_length=64)
     symbol: Optional[str] = Field(None, min_length=1, max_length=10)
-    mode: str = Field("paper", pattern="^(recommend_only|paper|live)$")
+    mode: str = Field("live", pattern="^(recommend_only|live)$")
     channel_ids: List[str] = Field(default_factory=list, max_length=8)
     reason: Optional[str] = Field(None, max_length=500)
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -1440,6 +1432,7 @@ async def run_backtest(
     price_fetcher: PriceFetcher = Depends(_require_price_fetcher),
 ):
     """Run historical backtest for a symbol."""
+    raise HTTPException(status_code=410, detail="Backtest execution has been removed from Sentinel Edge runtime.")
     # Lazy initialization of backtest engine
     global _backtest_engine
     if _backtest_engine is None:
@@ -1471,6 +1464,7 @@ async def run_backtest(
 @api_router.get("/backtest/monte-carlo/charts")
 async def list_monte_carlo_chart_sets():
     """List saved Monte Carlo chart bundles with API paths for each chart."""
+    raise HTTPException(status_code=410, detail="Backtest chart APIs have been removed from Sentinel Edge runtime.")
     root = _monte_carlo_chart_root()
     if not root.exists():
         return {"chart_sets": []}
@@ -1521,6 +1515,7 @@ async def list_monte_carlo_chart_sets():
 @api_router.get("/backtest/monte-carlo/charts/{run_id}/{chart_name}")
 async def get_monte_carlo_chart(run_id: str, chart_name: str):
     """Return one saved Monte Carlo chart JSON payload."""
+    raise HTTPException(status_code=410, detail="Backtest chart APIs have been removed from Sentinel Edge runtime.")
     safe_run_id = _safe_monte_carlo_chart_name(run_id)
     safe_chart_name = _safe_monte_carlo_chart_name(chart_name)
     root = _monte_carlo_chart_root()
@@ -1540,12 +1535,13 @@ async def get_monte_carlo_chart(run_id: str, chart_name: str):
 @api_router.get("/simulation-lab/status")
 async def get_simulation_lab_status():
     """Return the default-off Simulation Lab feature gate and roadmap experiments."""
-    return simulation_lab_status()
+    raise HTTPException(status_code=410, detail="Simulation Lab has been removed from Sentinel Edge runtime.")
 
 
 @api_router.post("/simulation-lab/orb/backtest")
 async def run_simulation_lab_orb_backtest(request: SimulationLabOrbBacktestRequest):
     """Run a gated ORB replay against explicit OHLC bars."""
+    raise HTTPException(status_code=410, detail="Simulation Lab has been removed from Sentinel Edge runtime.")
     try:
         require_simulation_lab_enabled()
         bars = [bar.model_dump() if hasattr(bar, "model_dump") else bar.dict() for bar in request.bars]
@@ -1566,6 +1562,7 @@ async def run_simulation_lab_orb_backtest(request: SimulationLabOrbBacktestReque
 @api_router.post("/simulation-lab/buying-power/allocation")
 async def run_simulation_lab_buying_power_allocation(request: SimulationLabBuyingPowerAllocationRequest):
     """Run a gated buying-power allocation experiment against candidate trades."""
+    raise HTTPException(status_code=410, detail="Simulation Lab has been removed from Sentinel Edge runtime.")
     try:
         require_simulation_lab_enabled()
         candidates = [
@@ -1588,6 +1585,7 @@ async def run_simulation_lab_buying_power_allocation(request: SimulationLabBuyin
 @api_router.post("/simulation-lab/stop-trailing-dca/compare")
 async def run_simulation_lab_stop_trailing_dca_comparison(request: SimulationLabStopTrailingDcaRequest):
     """Run a gated stop/trailing-stop/DCA comparison against an explicit price path."""
+    raise HTTPException(status_code=410, detail="Simulation Lab has been removed from Sentinel Edge runtime.")
     try:
         require_simulation_lab_enabled()
         price_path = [
@@ -1623,6 +1621,7 @@ async def run_backtest_enhanced(
     
     Returns run_id for fetching report later.
     """
+    raise HTTPException(status_code=410, detail="Backtest execution has been removed from Sentinel Edge runtime.")
     from backtest.engine import BacktestConfig, BacktestEngine
     from strategies.registry import create_strategy, StrategyRegistry
     
@@ -1737,6 +1736,7 @@ async def run_backtest_enhanced(
 @api_router.get("/backtest/runs")
 async def list_backtest_runs():
     """List all backtest runs"""
+    raise HTTPException(status_code=410, detail="Backtest execution has been removed from Sentinel Edge runtime.")
     return {
         "runs": [
             {"run_id": k, "created_at": v.get("created_at")}
@@ -1748,6 +1748,7 @@ async def list_backtest_runs():
 @api_router.get("/backtest/report/{run_id}")
 async def get_backtest_report(run_id: str):
     """Get full backtest report with trades and equity curve"""
+    raise HTTPException(status_code=410, detail="Backtest execution has been removed from Sentinel Edge runtime.")
     run = _backtest_runs.get(run_id)
     if not run:
         return {"error": "Run not found"}
@@ -1822,7 +1823,7 @@ _backtest_runs: Dict[str, Dict] = {}
 @api_router.get("/dry-run/status")
 async def get_dry_run_status():
     """Get current dry-run mode status."""
-    return {"dry_run_enabled": is_dry_run_enabled()}
+    raise HTTPException(status_code=410, detail="Dry-run mode has been removed from Sentinel Edge runtime.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1856,6 +1857,7 @@ async def optimize_strategy(
     price_fetcher: PriceFetcher = Depends(_require_price_fetcher),
 ):
     """Run grid search optimization over parameter combinations."""
+    raise HTTPException(status_code=410, detail="Backtest optimization has been removed from Sentinel Edge runtime.")
     global _optimizer
     if _optimizer is None:
         from strategies.optimizer import StrategyOptimizer

@@ -496,7 +496,7 @@ class SentinelEdge:
             "symbol": symbol,
             "confidence": float(payload.get("confidence", 1.0) or 1.0),
             "reason": str(payload.get("reason") or payload.get("summary") or action_key),
-            "mode": os.getenv("PULSE_HANDOFF_MODE", "paper"),
+            "mode": os.getenv("PULSE_HANDOFF_MODE", "live"),
             "orb_session": "market_open",
             "source": "sentinel_edge",
             "created_at": time.time(),

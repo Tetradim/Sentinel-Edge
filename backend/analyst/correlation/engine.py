@@ -293,7 +293,7 @@ class CorrelationEngine:
             "action": handoff_action,
             "confidence": max(0.0, min(float(cluster["strength"]), 1.0)),
             "reason": "correlation_bearish_cluster",
-            "mode": os.getenv("PULSE_HANDOFF_MODE", "paper"),
+            "mode": os.getenv("PULSE_HANDOFF_MODE", "live"),
             "orb_session": "market_open",
             "stop_type": "tighten_trailing",
             "trailing_percent": trailing_percent,

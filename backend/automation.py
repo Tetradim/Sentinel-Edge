@@ -21,7 +21,6 @@ from metrics import edge_automation_handoffs_total
 
 class AutomationMode(str, Enum):
     RECOMMEND_ONLY = "recommend_only"
-    PAPER = "paper"
     LIVE = "live"
 
 
@@ -53,6 +52,8 @@ class AutomationSettings:
     def from_env(cls) -> "AutomationSettings":
         enabled = os.getenv("EDGE_PULSE_HANDOFF_ENABLED", "false").lower() in ("1", "true", "yes", "on")
         mode_raw = os.getenv("EDGE_AUTOMATION_MODE", AutomationMode.RECOMMEND_ONLY.value).lower()
+        if mode_raw == "paper":
+            mode_raw = AutomationMode.LIVE.value
         try:
             mode = AutomationMode(mode_raw)
         except ValueError:

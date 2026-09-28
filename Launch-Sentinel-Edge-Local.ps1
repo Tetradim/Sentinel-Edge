@@ -13,6 +13,11 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 if (-not $ProjectRoot) { $ProjectRoot = (Get-Location).Path }
 
+$UserOperatorActionSecret = [Environment]::GetEnvironmentVariable("EDGE_OPERATOR_ACTION_SECRET", "User")
+if ($UserOperatorActionSecret -and -not $env:EDGE_OPERATOR_ACTION_SECRET) {
+    $env:EDGE_OPERATOR_ACTION_SECRET = $UserOperatorActionSecret
+}
+
 $Backend = Join-Path $ProjectRoot "backend"
 $Frontend = Join-Path $ProjectRoot "frontend"
 $DesktopPath = [Environment]::GetFolderPath("Desktop")

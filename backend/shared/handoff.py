@@ -22,7 +22,6 @@ class PulseHandoffAction(str, Enum):
 
 
 class PulseHandoffMode(str, Enum):
-    PAPER = "paper"
     LIVE = "live"
 
 
@@ -88,6 +87,8 @@ class PulseHandoffRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_action_context(self) -> "PulseHandoffRequest":
+        if self.mode != PulseHandoffMode.LIVE:
+            raise ValueError("paper handoff mode has been removed")
         required_stop_types = {
             PulseHandoffAction.REGULAR_STOP: PulseHandoffStopType.REGULAR,
             PulseHandoffAction.TRAILING_STOP: PulseHandoffStopType.TRAILING,

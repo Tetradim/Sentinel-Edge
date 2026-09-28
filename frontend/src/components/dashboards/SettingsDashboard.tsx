@@ -257,7 +257,6 @@ export function SettingsDashboard() {
   const [providerOrder, setProviderOrder] = useState<string[]>([]);
   const [automation, setAutomation] = useState<AutomationSettings | null>(null);
   const [pulseHandoffContract, setPulseHandoffContract] = useState<PulseHandoffContract | null>(null);
-  const [simulationLabStatus, setSimulationLabStatus] = useState<SimulationLabStatus | null>(null);
   const [notificationsStatus, setNotificationsStatus] = useState<NotificationsStatus | null>(null);
   const [tickers, setTickers] = useState<string[]>([]);
   const [settingsError, setSettingsError] = useState('');
@@ -305,14 +304,12 @@ export function SettingsDashboard() {
           automationResponse,
           tickersResponse,
           pulseContractResponse,
-          simulationLabResponse,
           notificationsResponse,
         ] = await Promise.allSettled([
           api.getMarketDataProviders(),
           api.getAutomationStatus(),
           api.getTickers(),
           api.getPulseHandoffSchema(),
-          api.getSimulationLabStatus(),
           api.getNotificationsStatus(),
         ]);
         if (cancelled) return;
@@ -322,7 +319,6 @@ export function SettingsDashboard() {
           automationResponse.status === 'rejected',
           tickersResponse.status === 'rejected',
           pulseContractResponse.status === 'rejected',
-          simulationLabResponse.status === 'rejected',
           notificationsResponse.status === 'rejected',
         ].filter(Boolean);
         setRuntimeSettingsError(failedRuntimeLoads.length > 0 ? 'Settings metadata failed to refresh. Showing latest available data.' : '');
@@ -342,9 +338,6 @@ export function SettingsDashboard() {
         }
         if (pulseContractResponse.status === 'fulfilled') {
           setPulseHandoffContract(pulseContractResponse.value);
-        }
-        if (simulationLabResponse.status === 'fulfilled') {
-          setSimulationLabStatus(simulationLabResponse.value);
         }
         if (notificationsResponse.status === 'fulfilled') {
           setNotificationsStatus(notificationsResponse.value);
@@ -857,56 +850,6 @@ export function SettingsDashboard() {
                 </div>
               </div>
             )}
-          </div>
-        )}
-      </div>
-
-      {/* Simulation Lab Status */}
-      <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
-        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <FlaskConical className="w-5 h-5 text-amber-400" />
-          Simulation Lab status
-        </h3>
-        <p className="text-sm text-gray-400 mb-4">
-          Read-only discovery for the default-hidden Simulation Lab gate. Lab actions stay hidden unless EDGE_SIMULATION_LAB_ENABLED is enabled on the backend.
-        </p>
-
-        {!simulationLabStatus ? (
-          <div className="text-sm text-gray-500">Simulation Lab status unavailable until the backend status endpoint responds.</div>
-        ) : (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-              <RuntimeDetail label="schema_version" value={simulationLabStatus.schema_version || '--'} />
-              <RuntimeDetail label="env_flag" value={simulationLabStatus.env_flag || 'EDGE_SIMULATION_LAB_ENABLED'} />
-              <RuntimeDetail label="enabled" value={formatSimulationLabBoolean(simulationLabStatus.enabled)} />
-              <RuntimeDetail label="default_hidden" value={formatSimulationLabBoolean(simulationLabStatus.default_hidden)} />
-              <RuntimeDetail label="disabled_reason" value={simulationLabStatus.disabled_reason || '--'} />
-            </div>
-
-            <div className="rounded-lg border border-gray-700 bg-gray-900/50 p-4">
-              <div className="text-sm font-medium text-gray-300">Experiment catalog</div>
-              <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-3">
-                {(simulationLabStatus.experiments || []).map((experiment, index) => (
-                  <div key={experiment.id || experiment.endpoint_path || experiment.label || `simulation-lab-experiment-${index}`} className="min-w-0 rounded-lg border border-gray-800 bg-gray-950/60 p-3">
-                    <div className="truncate text-xs font-semibold text-amber-200">
-                      {experiment.label || formatSimulationLabExperimentId(experiment.id)}
-                    </div>
-                    <div className="mt-2 space-y-1 text-xs text-gray-500">
-                      <div>state: {experiment.state || '--'}</div>
-                      <div>status: {experiment.status || '--'}</div>
-                      <div>runnable: {formatSimulationLabBoolean(experiment.runnable)}</div>
-                      <div>{formatSimulationLabExperimentEndpoint(experiment)}</div>
-                      <div>result_schema_version: {experiment.result_schema_version || '--'}</div>
-                      <div>result_metadata_fields: {formatSimulationLabResultMetadataFields(experiment.result_metadata_fields)}</div>
-                      {experiment.capability && <div>{experiment.capability}</div>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {(simulationLabStatus.experiments || []).length === 0 && (
-                <div className="mt-3 text-xs text-amber-300">No Simulation Lab experiments discovered.</div>
-              )}
-            </div>
           </div>
         )}
       </div>

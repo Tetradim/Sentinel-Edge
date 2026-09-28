@@ -256,51 +256,6 @@ class ApiClient {
     return fetchJSON('/api/markets');
   }
 
-  async runBacktest(symbol: string, startDate: string, endDate: string, initialCapital?: number, monteCarlo: any = {}) {
-    return fetchJSON('/api/backtest', {
-      method: 'POST',
-      body: JSON.stringify({
-        symbol,
-        start_date: startDate,
-        end_date: endDate,
-        initial_capital: initialCapital || 10000,
-        monte_carlo_enabled: monteCarlo.enabled ?? true,
-        monte_carlo_method: monteCarlo.method || 'bootstrap',
-        num_simulations: monteCarlo.simulations || 1000,
-        volatility_multiplier: monteCarlo.volatilityMultiplier || 1,
-        monte_carlo_confidence_level: monteCarlo.confidenceLevel || 0.95,
-        monte_carlo_random_seed: monteCarlo.randomSeed === '' ? null : monteCarlo.randomSeed,
-        monte_carlo_include_paths: monteCarlo.includePaths ?? true,
-        monte_carlo_saved_charts: monteCarlo.savedCharts ?? true,
-        monte_carlo_sample_path_count: monteCarlo.samplePathCount || 25,
-        monte_carlo_histogram_bins: monteCarlo.histogramBins || 20,
-        monte_carlo_ruin_threshold_pct: monteCarlo.ruinThresholdPct || 50,
-        monte_carlo_block_size: monteCarlo.blockSize || 5,
-      }),
-    });
-  }
-
-  async optimizeStrategy(symbol: string, startDate: string, endDate: string, paramGrid: any, initialCapital?: number) {
-    return fetchJSON('/api/backtest/optimize', {
-      method: 'POST',
-      body: JSON.stringify({
-        symbol,
-        start_date: startDate,
-        end_date: endDate,
-        param_grid: paramGrid,
-        initial_capital: initialCapital || 10000,
-      }),
-    });
-  }
-
-  async getDryRunStatus() {
-    return fetchJSON('/api/dry-run/status');
-  }
-
-  async getSimulationLabStatus() {
-    return fetchJSON('/api/simulation-lab/status');
-  }
-
   async getNotificationsStatus() {
     return fetchJSON('/api/notifications/status');
   }
@@ -309,27 +264,6 @@ class ApiClient {
     return fetchJSON('/api/config/validate', {
       method: 'POST',
       body: JSON.stringify(config),
-    });
-  }
-
-  async runSimulationLabOrbBacktest(payload: any) {
-    return fetchJSON('/api/simulation-lab/orb/backtest', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async runSimulationLabBuyingPowerAllocation(payload: any) {
-    return fetchJSON('/api/simulation-lab/buying-power/allocation', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async runSimulationLabStopTrailingDcaComparison(payload: any) {
-    return fetchJSON('/api/simulation-lab/stop-trailing-dca/compare', {
-      method: 'POST',
-      body: JSON.stringify(payload),
     });
   }
 

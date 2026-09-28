@@ -235,26 +235,6 @@ export const ChartWorkspace: React.FC<{ workspaceMode?: ChartWorkspaceMode }> = 
 
   useEffect(() => {
     let cancelled = false;
-    api.getSimulationLabStatus()
-      .then((status) => {
-        if (!cancelled) setSimulationLabStatus(status);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSimulationLabStatus({
-            enabled: false,
-            default_hidden: true,
-            experiments: [],
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
     setProofMarkerMessage('');
     api.getMarketMapProofMarkers(activeSymbol)
       .then((payload) => {
@@ -467,19 +447,6 @@ export const ChartWorkspace: React.FC<{ workspaceMode?: ChartWorkspaceMode }> = 
     setLabMessage('Lab result cleared');
   };
 
-  const runSimulationLabWorkflow = async (workflow: () => Promise<void>) => {
-    if (labRunInProgress) return;
-    if (labRunInProgressRef.current) return;
-    labRunInProgressRef.current = true;
-    setLabRunInProgress(true);
-    try {
-      await workflow();
-    } finally {
-      labRunInProgressRef.current = false;
-      setLabRunInProgress(false);
-    }
-  };
-
   const selectLayoutMode = (nextLayoutMode: ChartWorkspaceLayoutMode) => {
     updateWorkspaceLayout({
       ...workspaceLayout,
@@ -515,91 +482,6 @@ export const ChartWorkspace: React.FC<{ workspaceMode?: ChartWorkspaceMode }> = 
     clearChartWorkspaceLayout();
     setLayoutMessage('Layout reset');
   };
-
-  const runOrbReplay = () => runSimulationLabWorkflow(async () => {
-    if (!labActionsReady) {
-      setLabMessage(labUnavailableMessage);
-      return;
-    }
-    if (!snapshot?.bars.length) return;
-    setLabMessage(`Running ${selectedOrbReplaySession.label} ORB replay`);
-    try {
-      const result = await api.runSimulationLabOrbBacktest({
-        symbol: snapshot.symbol,
-        session_id: orbReplaySession,
-        timeframe_minutes: selectedOrbReplaySession.timeframeMinutes,
-        breakout_side: 'both',
-        target_r_multiple: 2,
-        bars: snapshot.bars,
-      });
-      rememberSimulationLabResult({
-        kind: 'orb_backtest',
-        label: `${selectedOrbReplaySession.label} ORB replay`,
-        result,
-      });
-      setLabMessage(`${selectedOrbReplaySession.label} ORB replay: ${result.summary?.breakouts ?? 0} breakouts`);
-    } catch (err) {
-      setLabMessage(err instanceof Error ? err.message : 'ORB replay unavailable');
-    }
-  });
-
-  const runAllocationExperiment = () => runSimulationLabWorkflow(async () => {
-    if (!labActionsReady) {
-      setLabMessage(labUnavailableMessage);
-      return;
-    }
-    if (!snapshot?.bars.length || !latestBar) return;
-    setLabMessage('Running buying-power allocation');
-    try {
-      const result = await api.runSimulationLabBuyingPowerAllocation({
-        buying_power: 10000,
-        cash_reserve_pct: 0.1,
-        max_position_pct: 0.4,
-        mode: 'confidence_weighted',
-        candidates: buildAllocationCandidates(snapshot.symbol, latestBar.close),
-      });
-      rememberSimulationLabResult({
-        kind: 'buying_power_allocation',
-        label: 'Buying-power allocation',
-        result,
-      });
-      setLabMessage(
-        `Allocation: $${Number(result.summary?.allocated_notional ?? 0).toLocaleString()} across ${
-          result.summary?.allocated_count ?? 0
-        } candidates`,
-      );
-    } catch (err) {
-      setLabMessage(err instanceof Error ? err.message : 'Allocation experiment unavailable');
-    }
-  });
-
-  const runExitComparison = () => runSimulationLabWorkflow(async () => {
-    if (!labActionsReady) {
-      setLabMessage(labUnavailableMessage);
-      return;
-    }
-    if (!snapshot?.bars.length) return;
-    setLabMessage('Running exit comparison');
-    try {
-      const result = await api.runSimulationLabStopTrailingDcaComparison({
-        entry_price: snapshot.bars[0].close,
-        quantity: 1,
-        stop_loss_pct: 0.05,
-        trailing_pct: 0.03,
-        dca_steps: 1,
-        dca_drop_pct: 0.03,
-        price_path: snapshot.bars,
-      });
-      rememberSimulationLabResult({
-        kind: 'stop_trailing_dca',
-        label: 'Stop vs trailing-stop vs DCA',
-        result,
-      });
-      setLabMessage(`Exit comparison: ${result.summary?.best_plan ?? 'n/a'} best`);
-    } catch (err) {
-      setLabMessage(err instanceof Error ? err.message : 'Exit comparison unavailable');
-    }
-  });
 
   const sidePanels = hasSidePanels ? (
     <aside className={sidePanelClass}>
@@ -754,8 +636,6 @@ export const ChartWorkspace: React.FC<{ workspaceMode?: ChartWorkspaceMode }> = 
             <Metric label="Chart" value={formatChartType(chartType)} />
             <Metric label="ORB overlays" value={formatOrbOverlaySessionSummary(showOrbOverlays, orbOverlaySessions)} />
             <Metric label="Volume" value={formatVolumeOverlay(showVolume)} />
-            <Metric label="Lab gate" value={formatSimulationLabGate(simulationLabStatus, simulationLabEnabled)} />
-            <Metric label="Lab reason" value={formatSimulationLabDisabledReason(simulationLabStatus)} />
           </div>
           <div className="mt-3 space-y-1 border-t border-slate-800/80 pt-2 text-[11px] text-slate-400">
             <div className="font-semibold uppercase text-slate-500">Workspace posture</div>
@@ -779,113 +659,6 @@ export const ChartWorkspace: React.FC<{ workspaceMode?: ChartWorkspaceMode }> = 
         </section>
       )}
 
-      {panelVisibility.lab && simulationLabEnabled && (
-        <section className={panelClass} aria-busy={labRunInProgress}>
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
-            <FlaskConical className="h-4 w-4 text-amber-300" />
-            Simulation Lab
-          </div>
-          {labRunInProgress && <div className="mb-2 text-xs text-amber-200">Running...</div>}
-          {!labActionsReady && <div className="mb-2 text-xs text-slate-400">{labUnavailableMessage}</div>}
-          <div className="flex flex-col gap-2">
-            <div className="grid grid-cols-2 gap-2" role="group" aria-label="ORB replay session">
-              {ORB_REPLAY_SESSION_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => setOrbReplaySession(option.id)}
-                  disabled={labRunInProgress}
-                  className={orbReplaySession === option.id ? activeToolClass : inactiveToolClass}
-                  aria-pressed={orbReplaySession === option.id}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <button type="button" onClick={runOrbReplay} disabled={labActionDisabled} className={inactiveToolClass}>
-              <BarChart3 className="h-4 w-4" />
-              ORB Replay
-            </button>
-            <button type="button" onClick={runAllocationExperiment} disabled={labActionDisabled} className={inactiveToolClass}>
-              <Activity className="h-4 w-4" />
-              Buying Power
-            </button>
-            <button type="button" onClick={runExitComparison} disabled={labActionDisabled} className={inactiveToolClass}>
-              <Activity className="h-4 w-4" />
-              Stop/DCA
-            </button>
-          </div>
-          {simulationLabExperiments.length > 0 && (
-            <div className="mt-3 space-y-1 text-[11px] text-slate-400">
-              <div className="font-semibold uppercase text-slate-500">Lab catalog</div>
-              {simulationLabExperiments.map((experiment, index) => {
-                const endpointLabel = formatSimulationLabEndpoint(experiment);
-                return (
-                  <div
-                    key={`${experiment.id || experiment.endpoint_path || experiment.label || 'experiment'}-${index}`}
-                    className="border-t border-slate-800/80 pt-1 first:border-t-0"
-                  >
-                    <div className="truncate text-slate-300">
-                      {experiment.label || formatSimulationLabExperimentId(experiment.id)}
-                    </div>
-                    <div className="truncate font-mono text-[10px] text-slate-500" title={endpointLabel}>
-                      {endpointLabel}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {simulationLabResult && (
-            <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/60 p-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="text-[11px] font-semibold uppercase text-slate-500">Last lab result</div>
-                  <span className={formatSimulationLabResultScopeClass(simulationLabResultSymbolMismatch)}>
-                    {formatSimulationLabResultScopeLabel(simulationLabResultSymbolMismatch)}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={forgetSimulationLabResult}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-700 text-slate-400 hover:border-cyan-400/40 hover:text-cyan-100"
-                  aria-label="Clear lab result"
-                  title="Clear lab result"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <div className="mt-1 truncate text-xs font-semibold text-slate-200">
-                {formatSimulationLabResultTitle(simulationLabResult)}
-              </div>
-              <div className="mt-1 truncate text-[11px] text-slate-500">
-                {formatSimulationLabResultMeta(simulationLabResult)}
-              </div>
-              {simulationLabResultSymbolMismatch && (
-                <div className="mt-1 rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-200">
-                  {formatSimulationLabResultMismatch(simulationLabResult, activeChartSymbol)}
-                </div>
-              )}
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {buildSimulationLabResultMetrics(simulationLabResult)
-                  .filter((metric) => simulationLabResultMetricLabels.has(metric.label))
-                  .map((metric) => {
-                    const mode = getSimulationLabResultMetricMode(metric.label);
-                    return (
-                      <Metric
-                        key={metric.label}
-                        label={metric.label}
-                        value={formatSimulationLabResultMetric(metric.value)}
-                        title={mode ? `summary ${metric.label} ${mode}` : `summary ${metric.label}`}
-                      />
-                    );
-                  })}
-              </div>
-            </div>
-          )}
-          {labMessage && <p className="mt-3 text-xs text-slate-300">{labMessage}</p>}
-        </section>
-      )}
     </aside>
   ) : null;
 

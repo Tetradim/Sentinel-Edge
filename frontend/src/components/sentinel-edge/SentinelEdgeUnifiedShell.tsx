@@ -13,7 +13,7 @@ type ViewKey =
 
 type HeatMode = 'GEX' | 'VEX' | 'VOL';
 type Severity = 'low' | 'medium' | 'high';
-type GateMode = 'recommend_only' | 'paper' | 'live' | string;
+type GateMode = 'recommend_only' | 'live' | string;
 type AdvisoryCommand =
   | 'Arm Trigger'
   | 'Risk Sweep'
@@ -970,7 +970,7 @@ function deriveState(snapshot: EdgeSnapshot, symbol: string): DerivedState {
   const levelRows = buildLevels(tickerSymbols, snapshot, symbol);
   const botRows = buildBots(snapshot, decisions);
   const auditRows = buildAudit(snapshot, decisions, gateMode);
-  const pulseGate = killActive ? 'KILL SWITCH' : gateMode === 'live' ? 'Live gated' : gateMode === 'paper' ? 'Paper gated' : 'Recommend only';
+  const pulseGate = killActive ? 'KILL SWITCH' : gateMode === 'live' ? 'Live gated' : 'Recommend only';
 
   return {
     riskScore,
@@ -2448,7 +2448,7 @@ function OpsControls({
         <h4>Automation Mode</h4>
         <p>Recommendation display stays separate from Pulse execution handoff.</p>
         <div className="se-segment wide">
-          {(['recommend_only', 'paper', 'live'] as GateMode[]).map((mode) => (
+          {(['recommend_only', 'live'] as GateMode[]).map((mode) => (
             <button key={mode} type="button" className={gateMode === mode ? 'active' : ''} onClick={() => onMode(mode)}>{String(mode).replace('_', ' ')}</button>
           ))}
         </div>

@@ -177,7 +177,7 @@ def _handoff_payload(
         "action": action,
         "confidence": confidence,
         "reason": reason,
-        "mode": os.getenv("PULSE_HANDOFF_MODE", "paper"),
+        "mode": os.getenv("PULSE_HANDOFF_MODE", "live"),
         "orb_session": "market_open",
         "idempotency_key": _idempotency_key(symbol, action, alert),
         "source": "sentinel_edge",
