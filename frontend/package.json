@@ -1,0 +1,47 @@
+{
+  "name": "sentinel-edge-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "start": "vite --host 0.0.0.0 --port 3000",
+    "build": "tsc && vite build",
+    "test:layout": "node --test tests/asset-command-monitor-layout.test.mjs",
+    "test:bundle": "node --test tests/bundle-budget.test.mjs",
+    "test:unified-api-smoke": "node tests/sentinel-edge-unified-api-smoke.mjs",
+    "test:unified-ui-live": "node tests/sentinel-edge-unified-live-probe.mjs",
+    "preview": "vite preview",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
+  },
+  "dependencies": {
+    "date-fns": "^4.1.0",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^1.7.0",
+    "plotly.js-dist-min": "^3.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-is": "^19.2.5",
+    "recharts": "^3.8.1",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.6.0",
+    "@types/plotly.js": "^2.12.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "autoprefixer": "^10.4.0",
+    "eslint": "^10.4.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "playwright-core": "^1.61.1",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.61.0",
+    "vite": "^8.0.16"
+  }
+}

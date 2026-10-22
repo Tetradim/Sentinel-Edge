@@ -1,0 +1,330 @@
+name: Build Sentinel Edge
+
+on:
+  push:
+    branches: [consolidated, OC-Iteration]
+    paths:
+      - 'backend/**'
+      - 'backend/requirements-dev.txt'
+      - 'frontend/**'
+      - 'frontend/package-lock.json'
+      - 'scripts/**'
+      - 'Launch-Sentinel-Edge.bat'
+      - 'Launch-Sentinel-Edge.ps1'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Custom version (semver)'
+        required: false
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_NAME: "Sentinel Edge"
+  VERSION: ${{ github.event.inputs.version || '1.0.0-beta' }}
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+
+jobs:
+  quality-gate:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    name: Quality Gate
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Create backend virtualenv
+        run: python -m venv backend/.venv
+
+      - name: Run local verification gate
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-local.ps1 -InstallBackendDevDeps -InstallFrontendDeps -SummaryPath verification-summary.json
+
+      - name: Upload local verification summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-verification-summary
+          path: verification-summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    name: Build Windows Installer
+    needs: quality-gate
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install -r backend/requirements.txt
+          pip install pyinstaller pillow
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          Write-Host "=== Starting Frontend Build ===" -ForegroundColor Cyan
+          Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "=== Frontend Build Complete ===" -ForegroundColor Green
+
+      - name: Verify frontend build
+        run: |
+          if (!(Test-Path frontend/dist)) {
+            Write-Host "ERROR: frontend/dist not found - frontend build failed"
+            exit 1
+          }
+          Write-Host "Frontend build verified"
+
+      - name: Copy frontend to static
+        run: |
+          Remove-Item backend/static -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path backend/static | Out-Null
+          Copy-Item -Path frontend/dist/* -Destination backend/static -Recurse -Force
+          Write-Host "Frontend copied to backend/static"
+
+      - name: Create app icon
+        run: |
+          python scripts/create_icon.py
+          Copy-Item app.ico backend/app.ico -Force
+
+      - name: Create bundled env
+        run: |
+          @"
+          MONGO_URL=mongodb://localhost:27017
+          DB_NAME=sentinel_edge
+          CORS_ORIGINS=http://localhost:8001,http://127.0.0.1:8001
+          PULSE_API_URL=http://localhost:8002
+          DRY_RUN=true
+          DEMO_MODE=false
+          "@ | Out-File -Encoding UTF8 backend/.env
+
+      - name: Build exe
+        working-directory: backend
+        run: |
+          Write-Host "=== PyInstaller Build Starting ===" -ForegroundColor Cyan
+          Remove-Item build -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue
+          $cacheDir = "$env:LOCALAPPDATA\pyinstaller"
+          if (Test-Path $cacheDir) {
+            Remove-Item $cacheDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          python -m PyInstaller `
+            --clean `
+            --name SentinelEdge `
+            --onedir `
+            --console `
+            --icon app.ico `
+            --add-data "static;static" `
+            --add-data ".env;." `
+            --hidden-import uvicorn `
+            --hidden-import motor `
+            --hidden-import pymongo `
+            --hidden-import yfinance `
+            --hidden-import prometheus_client `
+            --hidden-import httpx `
+            --hidden-import talib `
+            --hidden-import numpy `
+            --hidden-import pandas `
+            --collect-all httpx `
+            --collect-all yfinance `
+            --collect-all motor `
+            --collect-all pymongo `
+            --collect-all talib `
+            --copy-metadata httpx `
+            --noconfirm `
+            server.py 2>&1 | Tee-Object -FilePath build.log
+
+          Write-Host "=== Build log (last 80 lines) ===" -ForegroundColor Yellow
+          Get-Content build.log -Tail 80
+          Write-Host "=== PyInstaller Build Complete ===" -ForegroundColor Green
+
+      - name: Copy launchers into package
+        run: |
+          $package = "backend/dist/SentinelEdge"
+          if (!(Test-Path $package)) {
+            Write-Host "ERROR: package folder not found: $package"
+            exit 1
+          }
+          foreach ($launcher in @("Launch-Sentinel-Edge.bat", "Launch-Sentinel-Edge.ps1")) {
+            if (!(Test-Path $launcher)) {
+              Write-Host "ERROR: launcher not found: $launcher"
+              exit 1
+            }
+            Copy-Item $launcher -Destination (Join-Path $package $launcher) -Force
+          }
+          @"
+          @echo off
+          call "%~dp0Launch-Sentinel-Edge.bat" %*
+          "@ | Out-File -Encoding ASCII (Join-Path $package "Start Sentinel Edge.bat")
+          Write-Host "Packaged Sentinel Edge launchers"
+
+      - name: Copy static beside exe
+        run: |
+          if (!(Test-Path "backend/static/index.html")) {
+            Write-Host "ERROR: backend/static/index.html not found"
+            exit 1
+          }
+          Remove-Item "backend/dist/SentinelEdge/static" -Recurse -Force -ErrorAction SilentlyContinue
+          Copy-Item -Path "backend/static" -Destination "backend/dist/SentinelEdge/static" -Recurse -Force
+          Write-Host "Static frontend copied beside SentinelEdge.exe"
+
+      - name: Verify exe
+        run: |
+          $exe = "backend/dist/SentinelEdge/SentinelEdge.exe"
+          if (!(Test-Path $exe)) {
+            Write-Host "ERROR: $exe not found"
+            Get-ChildItem -Path "backend/dist" -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue
+            exit 1
+          }
+          if (!(Test-Path "backend/dist/SentinelEdge/static/index.html")) {
+            Write-Host "ERROR: packaged frontend static/index.html not found"
+            exit 1
+          }
+          Write-Host "SUCCESS: Built $exe"
+          Get-Item $exe | Select-Object Name, @{N="Size(MB)";E={[math]::Round($_.Length/1MB,2)}}
+
+      - name: Create Inno Setup script
+        run: |
+          $iss = @"
+          #define MyAppName "Sentinel Edge"
+          #define MyAppVersion "${{ env.VERSION }}"
+          #define MyAppPublisher "Tetradim / SignalForge Lab"
+          #define MyAppURL "https://github.com/Tetradim/sentinel-edge"
+          #define MyAppExeName "SentinelEdge.exe"
+
+          [Setup]
+          AppId={{A53B4105-3A45-49F4-88F7-1B9B8D4F67E2}
+          AppName={#MyAppName}
+          AppVersion={#MyAppVersion}
+          AppVerName={#MyAppName} {#MyAppVersion}
+          AppPublisher={#MyAppPublisher}
+          AppPublisherURL={#MyAppURL}
+          AppSupportURL={#MyAppURL}/issues
+          AppUpdatesURL={#MyAppURL}/releases
+          DefaultDirName={autopf}\{#MyAppName}
+          DefaultGroupName={#MyAppName}
+          AllowNoIcons=yes
+          OutputDir=../dist
+          OutputBaseFilename=SentinelEdge-Setup-{#MyAppVersion}
+          UninstallDisplayName={#MyAppName}
+          UninstallDisplayIcon={app}\{#MyAppExeName}
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          MinVersion=10.0.18362
+          PrivilegesRequired=admin
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+
+          [Languages]
+          Name: "english"; MessagesFile: "compiler:Default.isl"
+
+          [Tasks]
+          Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
+          Name: "launchapp"; Description: "Launch Sentinel Edge after install"; GroupDescription: "Startup"; Flags: checkedonce
+
+          [Files]
+          Source: "dist\SentinelEdge\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+          Source: ".env"; DestDir: "{app}"; Flags: ignoreversion; Check: not FileExists(ExpandConstant('{app}\.env'))
+
+          [Dirs]
+          Name: "{app}\data"; Permissions: users-full
+          Name: "{app}\logs"; Permissions: users-full
+
+          [Icons]
+          Name: "{group}\{#MyAppName}"; Filename: "{app}\Launch-Sentinel-Edge.bat"; WorkingDir: "{app}"
+          Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+          Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\Launch-Sentinel-Edge.bat"; WorkingDir: "{app}"; Tasks: desktopicon
+          Name: "{commondesktop}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+
+          [Run]
+          Filename: "{app}\Launch-Sentinel-Edge.bat"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent shellexec; Tasks: launchapp; WorkingDir: "{app}"
+
+          [UninstallDelete]
+          Type: filesandordirs; Name: "{app}"
+          Type: files; Name: "{userdesktop}\Sentinel-Edge.log"
+          Type: files; Name: "{userdesktop}\Sentinel-Edge-Transcript.log"
+          Type: files; Name: "{userdesktop}\Sentinel-Edge-MongoDB.log"
+          Type: files; Name: "{userdesktop}\SentinelEdge-Setup*.exe"
+          Type: files; Name: "{userdesktop}\Sentinel Edge-Setup*.exe"
+          Type: files; Name: "{userdesktop}\Sentinel Edge Setup*.exe"
+          Type: files; Name: "{commondesktop}\Sentinel-Edge.log"
+          Type: files; Name: "{commondesktop}\Sentinel-Edge-Transcript.log"
+          Type: files; Name: "{commondesktop}\Sentinel-Edge-MongoDB.log"
+          Type: files; Name: "{commondesktop}\SentinelEdge-Setup*.exe"
+          Type: files; Name: "{commondesktop}\Sentinel Edge-Setup*.exe"
+          Type: files; Name: "{commondesktop}\Sentinel Edge Setup*.exe"
+
+          [Code]
+          procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+          var
+            ResultCode: Integer;
+          begin
+            if CurUninstallStep = usUninstall then
+            begin
+              Exec('taskkill', '/F /IM SentinelEdge.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+              Exec('taskkill', '/F /IM mongod.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+            end;
+          end;
+          "@
+          $iss | Out-File -Encoding ASCII backend/setup.iss
+
+      - name: Build installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        with:
+          path: backend/setup.iss
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SentinelEdge-Setup-${{ env.VERSION }}
+          path: dist/SentinelEdge-Setup*.exe
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload build log
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: backend/build.log
+          if-no-files-found: warn
+          retention-days: 30

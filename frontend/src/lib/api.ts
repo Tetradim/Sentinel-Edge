@@ -1,0 +1,557 @@
+import type {
+  ChartWorkspaceIndicatorId,
+  ChartWorkspaceSnapshot,
+  MarketMapContext,
+  MarketMapProofMarkersPayload,
+  ScannerWorkbenchCatalog,
+  ScannerWorkbenchWatchIntent,
+  ScannerWorkbenchWatchIntentValidation,
+} from '@/types';
+
+const VITE_BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || '';
+const BACKEND_URL = VITE_BACKEND_URL || process.env.REACT_APP_BACKEND_URL || '';
+const FRONTEND_RUM_PATH = '/api/frontend/rum';
+const FRONTEND_RUM_BEACON_MAX_BYTES = 60 * 1024;
+const FRONTEND_RUM_BEACON_LIST_LIMIT = 5;
+
+export interface RateLimitStatus {
+  tracked_clients: number;
+  remaining_requests: number;
+  reset_seconds: number;
+  window_seconds: number;
+  max_requests_per_window: number;
+  bucket_pressure_warning_threshold: number;
+  pressure: 'normal' | 'warning';
+}
+
+export interface EdgeLiveness {
+  status: 'alive';
+  service: string;
+  pid: number;
+  uptime_seconds: number;
+  timestamp: string;
+}
+
+export interface EdgeReadinessCheckDetail {
+  name: string;
+  label: string;
+  description: string;
+  required: boolean;
+  ready: boolean;
+}
+
+export interface EdgeReadiness {
+  ready: boolean;
+  status: 'ready' | 'not_ready';
+  checks: Record<string, boolean>;
+  check_details?: Record<string, EdgeReadinessCheckDetail>;
+  failing_checks: string[];
+  failing_check_details?: EdgeReadinessCheckDetail[];
+  timestamp?: string;
+}
+
+export interface NormalizedEdgeReadiness extends EdgeReadiness {
+  check_details: Record<string, EdgeReadinessCheckDetail>;
+  failing_checks: string[];
+  failing_check_details: EdgeReadinessCheckDetail[];
+}
+
+export class ApiError extends Error {
+  status: number;
+  statusText: string;
+  detail: unknown;
+  retryAfterSeconds?: number;
+  rateLimitLimit?: number;
+  rateLimitRemaining?: number;
+  rateLimitResetSeconds?: number;
+
+  constructor(
+    status: number,
+    statusText: string,
+    detail: unknown,
+    retryAfterSeconds?: number,
+    rateLimit?: Partial<Pick<ApiError, 'rateLimitLimit' | 'rateLimitRemaining' | 'rateLimitResetSeconds'>>,
+  ) {
+    const message = getApiErrorMessage(status, statusText, detail);
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.statusText = statusText;
+    this.detail = detail;
+    this.retryAfterSeconds = retryAfterSeconds;
+    this.rateLimitLimit = rateLimit?.rateLimitLimit;
+    this.rateLimitRemaining = rateLimit?.rateLimitRemaining;
+    this.rateLimitResetSeconds = rateLimit?.rateLimitResetSeconds;
+  }
+}
+
+async function fetchJSON<T = any>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BACKEND_URL}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (!res.ok) {
+    const payload = await parseResponsePayload(res);
+    const retryAfterSeconds =
+      parseRetryAfterSeconds(res.headers.get('Retry-After')) ??
+      parseRetryAfterSeconds(payload?.detail?.retry_after_seconds);
+    const rateLimit = parseRateLimitHeaders(res.headers);
+    throw new ApiError(res.status, res.statusText, payload?.detail ?? payload, retryAfterSeconds, rateLimit);
+  }
+  if (!isJsonResponse(res)) {
+    throw new ApiError(res.status, res.statusText, {
+      error: `Expected JSON response from ${path}, received ${res.headers.get('Content-Type') || 'unknown content type'}`,
+    });
+  }
+  return res.json();
+}
+
+class ApiClient {
+  async getHealth() {
+    return fetchJSON('/api/health');
+  }
+
+  async getLiveness() {
+    return fetchJSON<EdgeLiveness>('/api/live');
+  }
+
+  async getReadiness(): Promise<NormalizedEdgeReadiness> {
+    try {
+      return normalizeEdgeReadiness(await fetchJSON<EdgeReadiness>('/api/ready'));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 503 && isEdgeReadiness(err.detail)) {
+        return normalizeEdgeReadiness(err.detail);
+      }
+      throw err;
+    }
+  }
+
+  async getProviderHealth() {
+    return fetchJSON('/api/providers/health');
+  }
+
+  async getMarketDataProviders() {
+    return fetchJSON('/api/market-data/providers');
+  }
+
+  async getPulseStatus() {
+    return fetchJSON('/api/pulse/status');
+  }
+
+  async getPulseAccount() {
+    return fetchJSON('/api/pulse/account');
+  }
+
+  async getPulsePositions() {
+    return fetchJSON('/api/pulse/positions');
+  }
+
+  async getPulseQueue() {
+    return fetchJSON('/api/pulse/queue');
+  }
+
+  async getPulseHandoffSchema() {
+    return fetchJSON('/api/pulse/handoff/schema');
+  }
+
+  async postFrontendRum(snapshot: any) {
+    return fetchJSON(FRONTEND_RUM_PATH, {
+      method: 'POST',
+      body: JSON.stringify(snapshot),
+    });
+  }
+
+  sendFrontendRumBeacon(snapshot: any) {
+    const body = toFrontendRumBeaconBody(snapshot);
+    const url = `${BACKEND_URL}${FRONTEND_RUM_PATH}`;
+
+    if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      const payload = new Blob([body], { type: 'application/json' });
+      if (navigator.sendBeacon(url, payload)) return true;
+    }
+
+    if (typeof fetch !== 'undefined') {
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        keepalive: true,
+      }).catch(() => undefined);
+      return true;
+    }
+
+    return false;
+  }
+
+  async getFrontendRumStatus() {
+    return fetchJSON('/api/frontend/rum/status');
+  }
+
+  async getRateLimitStatus() {
+    return fetchJSON<RateLimitStatus>('/api/rate-limit/status');
+  }
+
+  async getStats() {
+    return fetchJSON('/api/stats');
+  }
+
+  async getTickers() {
+    return fetchJSON('/api/tickers');
+  }
+
+  async addTicker(symbol: string) {
+    return fetchJSON(`/api/tickers/${encodeURIComponent(symbol)}`, { method: 'POST' });
+  }
+
+  async removeTicker(symbol: string) {
+    return fetchJSON(`/api/tickers/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
+  }
+
+  async updateTickerConfig(symbol: string, config: any) {
+    return fetchJSON(`/api/tickers/${encodeURIComponent(symbol)}/config`, {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    });
+  }
+
+  async getTickerConfig(symbol: string) {
+    return fetchJSON(`/api/tickers/${encodeURIComponent(symbol)}/config`);
+  }
+
+  async getOrbLevels(symbol: string) {
+    return fetchJSON(`/api/orb/${encodeURIComponent(symbol)}`);
+  }
+
+  async getChartWorkspace(symbol: string, options: { indicators?: ChartWorkspaceIndicatorId[]; limit?: number } = {}) {
+    const params = new URLSearchParams();
+    if (options.indicators?.length) params.set('indicators', options.indicators.join(','));
+    if (options.limit) params.set('limit', String(options.limit));
+    const query = params.toString();
+    return fetchJSON<ChartWorkspaceSnapshot>(`/api/chart-workspace/${encodeURIComponent(symbol)}${query ? `?${query}` : ''}`);
+  }
+
+  async getMarketMapProofMarkers(symbol: string, limit = 100) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    return fetchJSON<MarketMapProofMarkersPayload>(
+      `/api/market-map/proof-markers/${encodeURIComponent(symbol)}?${params}`,
+    );
+  }
+
+  async getMarketMapContext(symbol: string) {
+    return fetchJSON<MarketMapContext>(`/api/market-map/context/${encodeURIComponent(symbol)}`);
+  }
+
+  async getScannerWorkbenchCatalog() {
+    return fetchJSON<ScannerWorkbenchCatalog>('/api/scanner-workbench/catalog');
+  }
+
+  async validateScannerWorkbenchWatchIntent(intent: ScannerWorkbenchWatchIntent) {
+    return fetchJSON<ScannerWorkbenchWatchIntentValidation>('/api/scanner-workbench/watch-intent/validate', {
+      method: 'POST',
+      body: JSON.stringify(intent),
+    });
+  }
+
+  async getMarkets() {
+    return fetchJSON('/api/markets');
+  }
+
+  async runBacktest(symbol: string, startDate: string, endDate: string, initialCapital?: number, monteCarlo: any = {}) {
+    return fetchJSON('/api/backtest', {
+      method: 'POST',
+      body: JSON.stringify({
+        symbol,
+        start_date: startDate,
+        end_date: endDate,
+        initial_capital: initialCapital || 10000,
+        monte_carlo_enabled: monteCarlo.enabled ?? true,
+        monte_carlo_method: monteCarlo.method || 'bootstrap',
+        num_simulations: monteCarlo.simulations || 1000,
+        volatility_multiplier: monteCarlo.volatilityMultiplier || 1,
+        monte_carlo_confidence_level: monteCarlo.confidenceLevel || 0.95,
+        monte_carlo_random_seed: monteCarlo.randomSeed === '' ? null : monteCarlo.randomSeed,
+        monte_carlo_include_paths: monteCarlo.includePaths ?? true,
+        monte_carlo_saved_charts: monteCarlo.savedCharts ?? true,
+        monte_carlo_sample_path_count: monteCarlo.samplePathCount || 25,
+        monte_carlo_histogram_bins: monteCarlo.histogramBins || 20,
+        monte_carlo_ruin_threshold_pct: monteCarlo.ruinThresholdPct || 50,
+        monte_carlo_block_size: monteCarlo.blockSize || 5,
+      }),
+    });
+  }
+
+  async optimizeStrategy(symbol: string, startDate: string, endDate: string, paramGrid: any, initialCapital?: number) {
+    return fetchJSON('/api/backtest/optimize', {
+      method: 'POST',
+      body: JSON.stringify({
+        symbol,
+        start_date: startDate,
+        end_date: endDate,
+        param_grid: paramGrid,
+        initial_capital: initialCapital || 10000,
+      }),
+    });
+  }
+
+  async getDryRunStatus() {
+    return fetchJSON('/api/dry-run/status');
+  }
+
+  async getSimulationLabStatus() {
+    return fetchJSON('/api/simulation-lab/status');
+  }
+
+  async getNotificationsStatus() {
+    return fetchJSON('/api/notifications/status');
+  }
+
+  async validateConfig(config: any) {
+    return fetchJSON('/api/config/validate', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  async runSimulationLabOrbBacktest(payload: any) {
+    return fetchJSON('/api/simulation-lab/orb/backtest', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async runSimulationLabBuyingPowerAllocation(payload: any) {
+    return fetchJSON('/api/simulation-lab/buying-power/allocation', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async runSimulationLabStopTrailingDcaComparison(payload: any) {
+    return fetchJSON('/api/simulation-lab/stop-trailing-dca/compare', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async evaluateSupportResistance(payload: any) {
+    return fetchJSON('/api/support-resistance/evaluate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async pauseScheduler() {
+    return fetchJSON('/api/control/pause', { method: 'POST' });
+  }
+
+  async resumeScheduler() {
+    return fetchJSON('/api/control/resume', { method: 'POST' });
+  }
+
+  async toggleKillSwitch(state: boolean) {
+    return fetchJSON(`/api/emergency/kill-switch?state=${state}`, { method: 'POST' });
+  }
+
+  async getKillSwitchStatus() {
+    return fetchJSON('/api/emergency/kill-switch');
+  }
+
+  async getAutomationStatus() {
+    return fetchJSON('/api/automation');
+  }
+
+  async updateAutomationSettings(settings: any) {
+    return fetchJSON('/api/automation', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    });
+  }
+
+  async updateTickerAutomation(symbol: string, enabled: boolean) {
+    return fetchJSON(`/api/automation/tickers/${encodeURIComponent(symbol)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
+  async getCorrelation() {
+    return fetchJSON('/api/correlation');
+  }
+
+  async getDecisions() {
+    return fetchJSON('/api/decisions');
+  }
+
+  async enablePulseTrailingStop(symbol: string, percent: number) {
+    return fetchJSON(`/api/pulse/trailing-stop/${encodeURIComponent(symbol)}?percent=${encodeURIComponent(String(percent))}`, {
+      method: 'POST',
+    });
+  }
+
+  async sendPulseEmergencyExit(symbol: string, reason = 'Manual Protection tab trigger') {
+    return fetchJSON(`/api/pulse/emergency-exit/${encodeURIComponent(symbol)}?reason=${encodeURIComponent(reason)}`, {
+      method: 'POST',
+    });
+  }
+
+  async getGeneralApiSettings() {
+    return fetchJSON('/api/general-api');
+  }
+
+  async updateGeneralApiSettings(settings: any) {
+    return fetchJSON('/api/general-api', { method: 'PUT', body: JSON.stringify(settings) });
+  }
+
+  async testGeneralApi() {
+    return fetchJSON('/api/general-api/test', { method: 'POST' });
+  }
+
+  async registerGeneralApi() {
+    return fetchJSON('/api/general-api/register', { method: 'POST' });
+  }
+}
+
+function toFrontendRumBeaconBody(snapshot: any) {
+  const fullBody = JSON.stringify(snapshot);
+  if (rumBodyByteLength(fullBody) <= FRONTEND_RUM_BEACON_MAX_BYTES) return fullBody;
+
+  const compactBody = JSON.stringify(compactFrontendRumSnapshot(snapshot));
+  if (rumBodyByteLength(compactBody) <= FRONTEND_RUM_BEACON_MAX_BYTES) return compactBody;
+
+  return JSON.stringify({
+    ...compactFrontendRumSnapshot(snapshot),
+    slowInteractions: [],
+    longTasks: [],
+  });
+}
+
+function compactFrontendRumSnapshot(snapshot: any) {
+  const slowInteractions = Array.isArray(snapshot?.slowInteractions) ? snapshot.slowInteractions : [];
+  const longTasks = Array.isArray(snapshot?.longTasks) ? snapshot.longTasks : [];
+
+  return {
+    route: snapshot?.route || '/',
+    collectedAt: snapshot?.collectedAt,
+    metrics: Array.isArray(snapshot?.metrics) ? snapshot.metrics : [],
+    navigation: snapshot?.navigation,
+    slowInteractions: slowInteractions.slice(0, FRONTEND_RUM_BEACON_LIST_LIMIT),
+    longTasks: longTasks.slice(0, FRONTEND_RUM_BEACON_LIST_LIMIT),
+  };
+}
+
+function rumBodyByteLength(body: string) {
+  if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(body).length;
+  return body.length;
+}
+
+async function parseResponsePayload(res: Response): Promise<any | null> {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function isJsonResponse(res: Response) {
+  return (res.headers.get('Content-Type') || '').toLowerCase().includes('application/json');
+}
+
+function parseRetryAfterSeconds(value: unknown) {
+  if (value === null || value === undefined || value === '') return undefined;
+  const numericValue = Number(value);
+  if (Number.isFinite(numericValue) && numericValue >= 0) return Math.ceil(numericValue);
+
+  if (typeof value === 'string') {
+    const retryAt = Date.parse(value);
+    if (Number.isFinite(retryAt)) return Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
+  }
+
+  return undefined;
+}
+
+function parseRateLimitHeaders(headers: Headers) {
+  return {
+    rateLimitLimit: parseHeaderNumber(headers.get('RateLimit-Limit') ?? headers.get('X-RateLimit-Limit')),
+    rateLimitRemaining: parseHeaderNumber(headers.get('RateLimit-Remaining') ?? headers.get('X-RateLimit-Remaining')),
+    rateLimitResetSeconds: parseRetryAfterSeconds(headers.get('RateLimit-Reset') ?? headers.get('X-RateLimit-Reset')),
+  };
+}
+
+function parseHeaderNumber(value: unknown) {
+  if (value === null || value === undefined || value === '') return undefined;
+  const numericValue = Number(value);
+  if (Number.isFinite(numericValue) && numericValue >= 0) return numericValue;
+  return undefined;
+}
+
+function isEdgeReadiness(value: unknown): value is EdgeReadiness {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      'ready' in value &&
+      typeof value.ready === 'boolean' &&
+      'checks' in value &&
+      value.checks &&
+      typeof value.checks === 'object',
+  );
+}
+
+function normalizeEdgeReadiness(readiness: EdgeReadiness): NormalizedEdgeReadiness {
+  const ready = Boolean(readiness.ready);
+  const checks = Object.fromEntries(Object.entries(readiness.checks).map(([check, value]) => [check, Boolean(value)]));
+  const rawCheckDetails =
+    readiness.check_details && typeof readiness.check_details === 'object' ? readiness.check_details : {};
+  const checkNames = Array.from(new Set([...Object.keys(checks), ...Object.keys(rawCheckDetails)]));
+  const checkDetails = Object.fromEntries(checkNames.map((check) => [
+    check,
+    normalizeEdgeReadinessDetail(rawCheckDetails[check], check, Boolean(checks[check])),
+  ]));
+  const failingChecks = Array.isArray(readiness.failing_checks) ? readiness.failing_checks : [];
+  const failingCheckDetails = Array.isArray(readiness.failing_check_details)
+    ? readiness.failing_check_details.map((detail, index) => (
+        normalizeEdgeReadinessDetail(detail, failingChecks[index] || detail?.name || `readiness_check_${index + 1}`, false)
+      ))
+    : failingChecks.map((check) => {
+        const detail = checkDetails[check];
+        return normalizeEdgeReadinessDetail(detail, check, false);
+      });
+
+  return {
+    ...readiness,
+    ready,
+    status: ready ? 'ready' : 'not_ready',
+    checks,
+    check_details: checkDetails,
+    failing_checks: failingChecks,
+    failing_check_details: failingCheckDetails,
+  };
+}
+
+function normalizeEdgeReadinessDetail(
+  detail: Partial<EdgeReadinessCheckDetail> | undefined,
+  fallbackName: string,
+  fallbackReady: boolean,
+): EdgeReadinessCheckDetail {
+  return {
+    name: detail?.name || fallbackName,
+    label: detail?.label || formatReadinessCheckLabel(fallbackName),
+    description: detail?.description || fallbackName,
+    required: detail?.required ?? true,
+    ready: detail?.ready ?? fallbackReady,
+  };
+}
+
+function formatReadinessCheckLabel(fallbackName: string) {
+  return fallbackName.replace(/[_-]+/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function getApiErrorMessage(status: number, statusText: string, detail: unknown) {
+  if (typeof detail === 'string') return detail;
+  if (detail && typeof detail === 'object' && 'error' in detail && typeof detail.error === 'string') {
+    return detail.error;
+  }
+  return `HTTP ${status}: ${statusText}`;
+}
+
+export const api = new ApiClient();
+export default api;

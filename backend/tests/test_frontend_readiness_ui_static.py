@@ -1,0 +1,100 @@
+"""Static checks for frontend live/ready runtime visibility."""
+from pathlib import Path
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+API = ROOT / "frontend" / "src" / "lib" / "api.ts"
+ADVISOR_HEALTH = ROOT / "frontend" / "src" / "components" / "dashboards" / "AdvisorHealth.tsx"
+
+
+class FrontendReadinessUiStaticTests(unittest.TestCase):
+    def test_api_client_exposes_live_and_ready_endpoints(self):
+        text = API.read_text(encoding="utf-8")
+
+        self.assertIn("export interface EdgeLiveness", text)
+        self.assertIn("export interface EdgeReadinessCheckDetail", text)
+        self.assertIn("export interface EdgeReadiness", text)
+        self.assertIn("export interface NormalizedEdgeReadiness extends EdgeReadiness", text)
+        self.assertIn("failing_checks: string[]", text)
+        self.assertIn("failing_check_details?: EdgeReadinessCheckDetail[]", text)
+        self.assertIn("failing_check_details: EdgeReadinessCheckDetail[]", text)
+        self.assertIn("check_details?: Record<string, EdgeReadinessCheckDetail>", text)
+        self.assertIn("check_details: Record<string, EdgeReadinessCheckDetail>", text)
+        self.assertIn("async getLiveness()", text)
+        self.assertIn("fetchJSON<EdgeLiveness>('/api/live')", text)
+        self.assertIn("async getReadiness(): Promise<NormalizedEdgeReadiness>", text)
+        self.assertIn("normalizeEdgeReadiness(await fetchJSON<EdgeReadiness>('/api/ready'))", text)
+        self.assertIn("return normalizeEdgeReadiness(err.detail)", text)
+        self.assertIn("function normalizeEdgeReadiness(readiness: EdgeReadiness): NormalizedEdgeReadiness", text)
+        self.assertIn("const ready = Boolean(readiness.ready)", text)
+        self.assertIn("const checks = Object.fromEntries(Object.entries(readiness.checks).map", text)
+        self.assertIn("status: ready ? 'ready' : 'not_ready'", text)
+        self.assertIn("checks,", text)
+        self.assertIn("function normalizeEdgeReadinessDetail", text)
+        self.assertIn("const checkNames = Array.from(new Set([...Object.keys(checks), ...Object.keys(rawCheckDetails)]));", text)
+        self.assertIn("Object.fromEntries(checkNames.map((check) => [", text)
+        self.assertIn("normalizeEdgeReadinessDetail(rawCheckDetails[check], check, Boolean(checks[check]))", text)
+        self.assertIn("normalizeEdgeReadinessDetail(detail, check", text)
+        self.assertIn("const failingChecks = Array.isArray(readiness.failing_checks)", text)
+        self.assertIn("failingChecks.map((check)", text)
+        self.assertIn("readiness.failing_check_details.map((detail, index)", text)
+        self.assertIn("failingChecks[index] || detail?.name", text)
+        self.assertIn("failing_checks: failingChecks", text)
+        self.assertIn("failing_check_details: failingCheckDetails", text)
+        self.assertIn("function formatReadinessCheckLabel", text)
+        self.assertIn("fallbackName.replace(/[_-]+/g, ' ')", text)
+        self.assertIn("label: detail?.label || formatReadinessCheckLabel(fallbackName)", text)
+        self.assertIn("err instanceof ApiError && err.status === 503", text)
+
+    def test_advisor_health_surfaces_runtime_readiness(self):
+        text = ADVISOR_HEALTH.read_text(encoding="utf-8")
+
+        self.assertIn("type EdgeLiveness", text)
+        self.assertIn("type NormalizedEdgeReadiness", text)
+        self.assertIn("live: EdgeLiveness | null", text)
+        self.assertIn("ready: NormalizedEdgeReadiness | null", text)
+        self.assertNotIn("live: any | null", text)
+        self.assertNotIn("ready: any | null", text)
+        self.assertIn("api.getLiveness()", text)
+        self.assertIn("api.getReadiness()", text)
+        self.assertIn("Runtime Readiness", text)
+        self.assertIn("import { formatAge } from '@/lib/time'", text)
+        self.assertNotIn("const formatAge = (iso: string | null)", text)
+        self.assertIn("readinessDetails", text)
+        self.assertIn("failingReadinessDetails", text)
+        self.assertIn("state.ready?.failing_check_details ?? []", text)
+        self.assertIn("state.ready?.check_details ?? {}", text)
+        self.assertIn("const readinessSubtitle = state.ready", text)
+        self.assertIn("'Readiness unavailable'", text)
+        self.assertIn("subtitle={readinessSubtitle}", text)
+        self.assertIn("const readinessCheckedAt = formatAge(state.ready?.timestamp || null)", text)
+        self.assertIn("Readiness checked", text)
+        self.assertIn("{readinessCheckedAt}", text)
+        self.assertNotIn("Array.isArray(state.ready?.failing_check_details)", text)
+        self.assertNotIn("typeof state.ready.check_details === 'object'", text)
+        self.assertNotIn("readinessFailures.map((check)", text)
+        self.assertNotIn("readinessDetails[check] || {", text)
+        self.assertIn("detail.label", text)
+        self.assertIn("title={detail.description || detail.name}", text)
+        self.assertIn("edge-readiness-checks", text)
+        self.assertIn("edge-readiness-blockers", text)
+        self.assertIn("failingReadinessDetails.map((detail)", text)
+        self.assertIn("failingReadinessDetails.length > 0 &&", text)
+        self.assertIn("failing readiness checks", text)
+
+    def test_advisor_health_surfaces_partial_refresh_failures(self):
+        text = ADVISOR_HEALTH.read_text(encoding="utf-8")
+
+        self.assertIn("const failedLoads = [live, ready, health, stats, pulse, killSwitch, providerHealth, providerCatalog, decisions, automation].filter", text)
+        self.assertIn("setState((prev) => ({", text)
+        self.assertIn("error: failedLoads.length > 0 ? 'Advisor health data failed to refresh. Showing latest available data.' : null", text)
+        self.assertIn("live: live.status === 'fulfilled' ? live.value : prev.live", text)
+        self.assertIn("ready: ready.status === 'fulfilled' ? ready.value : prev.ready", text)
+        self.assertIn("providers: providerHealth.status === 'fulfilled' ? providerHealth.value.providers || {} : prev.providers", text)
+        self.assertIn("{state.error &&", text)
+        self.assertIn('role="alert"', text)
+
+
+if __name__ == "__main__":
+    unittest.main()

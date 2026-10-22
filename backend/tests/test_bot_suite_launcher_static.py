@@ -1,0 +1,96 @@
+"""Static checks for the Sentinel bot suite launcher."""
+
+from pathlib import Path
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+BAT = ROOT / "Launch-Sentinel-Bot-Suite.bat"
+PS1 = ROOT / "Launch-Sentinel-Bot-Suite.ps1"
+
+
+class BotSuiteLauncherStaticTests(unittest.TestCase):
+    def test_batch_wrapper_invokes_powershell_launcher(self):
+        batch = BAT.read_text(encoding="utf-8")
+
+        self.assertIn("Launch-Sentinel-Bot-Suite.ps1", batch)
+        self.assertIn("%*", batch)
+        self.assertIn("Sentinel Bot Suite", batch)
+
+    def test_powershell_launcher_targets_local_sentinel_components(self):
+        script = PS1.read_text(encoding="utf-8")
+
+        self.assertIn("Sentinel-Pulse-branch-audit", script)
+        self.assertIn("sentinel-flare-frontend-check", script)
+        self.assertIn("Sentinel Echo", script)
+        self.assertIn("Sentinel-Chain", script)
+        self.assertIn("Sentinel-Core", script)
+        self.assertIn("sentinel-edge", script)
+        self.assertIn("Launch-Sentinel-Pulse-Local.ps1", script)
+        self.assertIn("Launch-Sentinel-Edge-Local.ps1", script)
+        self.assertIn("Launch-Sentinel-Flare.ps1", script)
+        self.assertIn("Launch-Sentinel-Echo.ps1", script)
+        self.assertIn("Launch-Sentinel-Chain.ps1", script)
+        self.assertIn("Launch-Sentinel-Core.ps1", script)
+        self.assertIn("OpenComponentBrowsers", script)
+        self.assertIn("SkipDarkpool", script)
+        self.assertIn("SkipDiscord", script)
+        self.assertIn("SkipCrypto", script)
+
+    def test_powershell_launcher_uses_requested_port_map(self):
+        script = PS1.read_text(encoding="utf-8")
+
+        expected_defaults = [
+            "[int]$EdgeBackendPort = 8000",
+            "[int]$EdgeFrontendPort = 3000",
+            "[int]$PulseBackendPort = 8001",
+            "[int]$PulseFrontendPort = 3001",
+            "[int]$DarkpoolBackendPort = 8002",
+            "[int]$DarkpoolFrontendPort = 3002",
+            "[int]$DiscordBackendPort = 8003",
+            "[int]$DiscordFrontendPort = 3003",
+            "[int]$CryptoBackendPort = 8004",
+            "[int]$CryptoFrontendPort = 3004",
+            "[int]$SentinelCoreBackendPort = 8005",
+            "[int]$SentinelCoreFrontendPort = 3005",
+        ]
+        for default in expected_defaults:
+            with self.subTest(default=default):
+                self.assertIn(default, script)
+
+    def test_powershell_argument_list_is_not_enumerated_to_null(self):
+        script = PS1.read_text(encoding="utf-8")
+
+        self.assertIn("return ,$list", script)
+        self.assertIn("$args = New-ArgumentList", script)
+        self.assertIn('$args.Add("-BackendPort")', script)
+
+    def test_desktop_launch_uses_profile_menu_instead_of_launching_everything(self):
+        script = PS1.read_text(encoding="utf-8")
+
+        self.assertIn('[ValidateSet("Menu", "Core", "Discord", "All", "None")]', script)
+        self.assertIn('[string]$Profile = "Menu"', script)
+        self.assertIn("[switch]$All", script)
+        self.assertIn("function Select-LaunchProfile", script)
+        self.assertIn('Write-Host "  1. Core operator stack', script)
+        self.assertIn('Write-Host "  2. Discord Options Bot only"', script)
+        self.assertIn('Write-Host "  3. All components"', script)
+        self.assertIn('if ($Profile -eq "Menu" -and -not (Test-ExplicitComponentSelection))', script)
+        self.assertIn('Write-Status "Launch profile: $Profile"', script)
+
+    def test_launcher_still_supports_explicit_all_components_mode(self):
+        script = PS1.read_text(encoding="utf-8")
+
+        self.assertIn('if ($All) {', script)
+        self.assertIn('$Profile = "All"', script)
+        self.assertIn('"All" {', script)
+        self.assertIn("Use -Profile Core, -Profile Discord, -Profile All, or -All", script)
+
+    def test_edge_launcher_receives_suite_pulse_api_url(self):
+        script = PS1.read_text(encoding="utf-8")
+
+        self.assertIn('$args.Add("-PulseApiUrl"); $args.Add("http://127.0.0.1:$PulseBackendPort")', script)
+
+
+if __name__ == "__main__":
+    unittest.main()

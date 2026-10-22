@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Sentinel Edge — Runtime Dependencies
+# ─────────────────────────────────────────────────────────────────────────────
+# Dev/test tools (pytest, black, mypy, flake8, isort) → requirements-dev.txt
+# Last audited: 2026-04-12
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi==0.110.1
+starlette==0.37.2          # CORSMiddleware, status codes (fastapi dep, explicitly used)
+uvicorn==0.25.0            # ASGI server
+
+# ── Database ──────────────────────────────────────────────────────────────────
+motor==3.3.1               # Async MongoDB driver
+pymongo==4.5.0             # Sync MongoDB driver (motor dependency; kept explicit)
+
+# ── HTTP client ───────────────────────────────────────────────────────────────
+httpx==0.28.1              # Async HTTP — Pulse API calls, correlation overrides
+aiohttp==3.11.11           # Async HTTP client (ws_manager dependency)
+
+# ── Market data ───────────────────────────────────────────────────────────────
+# NOTE: yfinance is a web scraper, not an official data feed.
+#       Replace with Alpaca / Polygon.io / IEX Cloud for production reliability.
+yfinance==1.2.1
+pandas==3.0.2              # OHLCV DataFrame manipulation (yfinance dep)
+numpy==2.4.4               # Numerical arrays (pandas dep)
+scipy==1.17.1              # Peak/trough detection for complex chart patterns
+
+# ── Metrics ───────────────────────────────────────────────────────────────────
+prometheus_client==0.24.1  # Counter, Gauge, Histogram, /metrics endpoint
+
+# ── Config & timezone ─────────────────────────────────────────────────────────
+python-dotenv==1.2.2       # .env file loading
+pytz==2026.1.post1         # Timezone handling for 7 global market schedules
+
+# ── Data validation ───────────────────────────────────────────────────────────
+pydantic==2.12.5           # BaseModel for Signal dataclass and FastAPI models
+anyio==4.13.0              # Async I/O (httpx / fastapi dep; pinned for stability)
+
+# ── WebSocket ─────────────────────────────────────────────────────────────────
+websockets==16.0           # Bidirectional WebSocket connection to Sentinel Pulse
+
+# ── OpenTelemetry (distributed tracing → Grafana Tempo) ──────────────────────
+opentelemetry-api==1.40.0
+opentelemetry-sdk==1.40.0
+opentelemetry-exporter-otlp-proto-grpc==1.40.0   # gRPC OTLP → Tempo
+opentelemetry-instrumentation-fastapi==0.61b0
+opentelemetry-instrumentation-httpx==0.61b0
+opentelemetry-instrumentation-asyncio==0.61b0
+grpcio==1.80.0             # gRPC transport (OTel exporter dep)
+protobuf==5.29.6           # Protocol buffers (gRPC / OTel dep)

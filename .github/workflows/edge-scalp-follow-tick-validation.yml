@@ -1,0 +1,57 @@
+name: Edge Scalp Follow Tick Validation
+
+on:
+  push:
+    branches: [OC-Iteration]
+    paths:
+      - 'scripts/run_spy_qqq_execution_validation.py'
+      - '.github/workflows/edge-scalp-follow-tick-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install validation dependencies
+        run: pip install --quiet pandas numpy yfinance requests
+      - name: Compile and self-test
+        run: |
+          python -m py_compile scripts/run_spy_qqq_execution_validation.py
+          python scripts/run_spy_qqq_execution_validation.py --self-test
+      - name: Run SPY and QQQ execution validation
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+        run: |
+          python scripts/run_spy_qqq_execution_validation.py \
+            --start 2026-06-19 \
+            --end 2026-07-18 \
+            --exact-days 2026-07-15,2026-07-16,2026-07-17 \
+            --output artifacts/edge-scalp-follow-tick-validation
+      - name: Upload validation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: edge-scalp-follow-tick-validation
+          path: artifacts/edge-scalp-follow-tick-validation/**
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Commit latest aggregate evidence
+        if: ${{ success() }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add artifacts/edge-scalp-follow-tick-validation
+          git diff --cached --quiet && exit 0
+          git commit -m 'Record SPY QQQ execution validation [skip ci]'
+          git push origin HEAD:OC-Iteration

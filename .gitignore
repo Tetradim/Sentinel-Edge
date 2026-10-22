@@ -6,11 +6,31 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+.env
+backend/.env
 
 node_modules
 dist
 dist-ssr
 *.local
+
+# Python generated artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+backend/.venv/
+
+# Local verification artifacts
+test_reports/
+verification-summary.json
+.superpowers/
+
+# Local runtime state
+/data/
+/data/automation_settings.json
+/backend/data/automation_settings.json
+/backend/data/event-bus/
 
 # Editor directories and files
 .vscode/*
@@ -22,3 +42,4 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+backend/data/general_api.json
